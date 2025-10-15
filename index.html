@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>용돈 관리 및 저금 앱</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load D3.js for Charting -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <!-- Use Inter font -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        /* Custom styles for D3 chart container */
+        .chart-container {
+            width: 100%;
+            overflow-x: auto;
+            background-color: #fff;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+        }
+        .bar { fill: theme('colors.indigo.500'); }
+        .bar:hover { fill: theme('colors.indigo.600'); }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+    <!-- Main Application Container -->
+    <div id="app" class="w-full max-w-xl bg-white shadow-2xl rounded-xl p-6 md:p-8">
+        <h1 class="text-3xl font-extrabold text-gray-900 mb-6 text-center">💸 월 용돈 관리 및 저금 프로그램</h1>
+        <div id="auth-status" class="text-sm text-center mb-4 text-gray-500">인증 중...</div>
+
+        <!-- Tab Navigation -->
+        <div class="flex border-b border-gray-200 mb-6">
+            <button id="tab-home" onclick="switchTab('home')" class="py-2 px-4 text-sm font-medium transition-colors duration-200 border-b-2 border-indigo-500 text-indigo-600">
+                홈 (기록 및 잔액)
+            </button>
+            <button id="tab-analysis" onclick="switchTab('analysis')" class="py-2 px-4 text-sm font-medium transition-colors duration-200 border-b-2 border-transparent text-gray-500 hover:text-indigo-600 hover:border-indigo-300">
+                지출 분석
+            </button>
+        </div>
+
+        <!-- --- HOME VIEW: Balance, Input, History --- -->
+        <div id="home-view" class="tab-content">
+            <!-- Current Balance & Goal Section -->
+            <div class="bg-indigo-600 text-white p-6 rounded-lg mb-6 shadow-lg">
+                <div class="flex justify-between items-center mb-3">
+                    <p class="text-lg font-semibold">현재 잔액</p>
+                    <p id="current-balance" class="text-4xl font-bold">0원</p>
+                </div>
+                
+                <div class="mt-4">
+                    <p class="text-sm mb-1">저금 목표: <span id="goal-display">0원</span></p>
+                    <div class="w-full bg-indigo-400 rounded-full h-2.5">
+                        <div id="progress-bar" class="bg-yellow-300 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                    <p id="progress-percentage" class="text-right text-xs mt-1 font-medium">0% 달성</p>
+                </div>
+            </div>
+
+            <!-- Goal Setting & Allowance Setting Buttons -->
+            <div class="mb-6 grid grid-cols-2 gap-3 text-center">
+                <button onclick="showGoalModal()" class="py-2 bg-pink-500 text-white font-semibold rounded-lg hover:bg-pink-600 transition duration-150 shadow-md">
+                    🎯 저금 목표 설정
+                </button>
+                <button onclick="showAllowanceModal()" class="py-2 bg-purple-500 text-white font-semibold rounded-lg hover:bg-purple-600 transition duration-150 shadow-md">
+                    📅 월 용돈 설정 (<span id="monthly-allowance-display">0원</span>)
+                </button>
+            </div>
+
+            <!-- Transaction Input Form -->
+            <div class="bg-gray-100 p-5 rounded-lg mb-6 shadow-inner">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">입출금 기록</h2>
+                <form id="transaction-form" class="space-y-4">
+                    <div>
+                        <label for="type" class="block text-sm font-medium text-gray-700">종류</label>
+                        <div class="flex space-x-4 mt-1">
+                            <label class="flex items-center">
+                                <input type="radio" id="income" name="type" value="income" class="form-radio text-green-500" checked>
+                                <span class="ml-2 font-medium text-green-600">수입 (+)</span>
+                            </label>
+                            <label class="flex items-center">
+                                <input type="radio" id="expense" name="type" value="expense" class="form-radio text-red-500">
+                                <span class="ml-2 font-medium text-red-600">지출 (-)</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <!-- NEW: Category Select for Expenses -->
+                    <div id="category-field">
+                        <label for="category" class="block text-sm font-medium text-gray-700">카테고리 (지출 시 필수)</label>
+                        <select id="category" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2.5 focus:ring-indigo-500 focus:border-indigo-500">
+                            <option value="none">-- 카테고리를 선택하세요 --</option>
+                            <option value="식비">식비 (Food)</option>
+                            <option value="교통">교통 (Transport)</option>
+                            <option value="취미/여가">취미/여가 (Hobbies/Leisure)</option>
+                            <option value="쇼핑">쇼핑 (Shopping)</option>
+                            <option value="기타">기타 (Other)</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label for="amount" class="block text-sm font-medium text-gray-700">금액 (원)</label>
+                        <input type="number" id="amount" required min="1" placeholder="10000" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2.5 focus:ring-indigo-500 focus:border-indigo-500">
+                    </div>
+                    <div>
+                        <label for="description" class="block text-sm font-medium text-gray-700">내용</label>
+                        <input type="text" id="description" required placeholder="예: 용돈 받음, 아이스크림 구매" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2.5 focus:ring-indigo-500 focus:border-indigo-500">
+                    </div>
+                    <button type="submit" class="w-full py-2 bg-indigo-500 text-white font-semibold rounded-lg hover:bg-indigo-600 transition duration-150 shadow-md">
+                        기록하기
+                    </button>
+                </form>
+            </div>
+
+            <!-- Spending Advice Section -->
+            <div id="advice-section" class="mb-6 p-4 rounded-lg border text-gray-800 hidden">
+                <h2 class="text-lg font-bold flex items-center mb-2">💡 용돈 관리 조언 및 이달의 예산</h2>
+                <p id="advice-text" class="text-sm"></p>
+            </div>
+
+            <!-- Transaction History -->
+            <div class="p-5 rounded-lg border border-gray-200">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">최근 기록</h2>
+                <ul id="history-list" class="space-y-3">
+                    <!-- History items will be inserted here by JavaScript -->
+                    <li class="text-center text-gray-500">기록된 거래가 없습니다.</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- --- ANALYSIS VIEW: Chart --- -->
+        <div id="analysis-view" class="tab-content hidden">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4 text-center">📊 카테고리별 지출 분석 (최근 30일)</h2>
+            <div id="chart-container" class="chart-container">
+                <svg id="spending-chart" width="400" height="300"></svg>
+                <div id="chart-message" class="text-center text-gray-500 mt-4">지출 기록이 부족하여 차트를 표시할 수 없습니다.</div>
+            </div>
+        </div>
+        
+        <!-- Goal Setting Modal (Hidden by default) -->
+        <div id="goal-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden items-center justify-center p-4 z-50">
+            <div class="bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm">
+                <h3 class="text-2xl font-bold mb-4 text-gray-800">🎯 저금 목표 설정</h3>
+                <form id="goal-form" class="space-y-4">
+                    <div>
+                        <label for="new-goal" class="block text-sm font-medium text-gray-700">새 목표 금액 (원)</label>
+                        <input type="number" id="new-goal" required min="1000" placeholder="50000" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2.5 focus:ring-pink-500 focus:border-pink-500">
+                    </div>
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" onclick="hideGoalModal()" class="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-100 transition duration-150">취소</button>
+                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white font-semibold rounded-lg hover:bg-pink-600 transition duration-150">저장</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <!-- Allowance Setting Modal -->
+        <div id="allowance-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden items-center justify-center p-4 z-50">
+            <div class="bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm">
+                <h3 class="text-2xl font-bold mb-4 text-gray-800">📅 월별 용돈 설정</h3>
+                <form id="allowance-form" class="space-y-4">
+                    <div>
+                        <label for="new-allowance" class="block text-sm font-medium text-gray-700">월별 용돈 금액 (원)</label>
+                        <input type="number" id="new-allowance" required min="0" placeholder="50000" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2.5 focus:ring-purple-500 focus:border-purple-500">
+                    </div>
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" onclick="hideAllowanceModal()" class="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-100 transition duration-150">취소</button>
+                        <button type="submit" class="px-4 py-2 bg-purple-500 text-white font-semibold rounded-lg hover:bg-purple-600 transition duration-150">저장</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        
+        <!-- Custom Message Box (for alerts/confirmations) -->
+        <div id="message-box" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden items-center justify-center p-4 z-50">
+            <div class="bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm">
+                <h3 id="message-title" class="text-xl font-bold mb-3 text-gray-800"></h3>
+                <p id="message-text" class="mb-4 text-gray-700"></p>
+                <div id="message-actions" class="flex justify-end space-x-3">
+                    <button id="message-cancel" class="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-100 transition duration-150 hidden">취소</button>
+                    <button id="message-confirm" class="px-4 py-2 bg-indigo-500 text-white font-semibold rounded-lg hover:bg-indigo-600 transition duration-150">확인</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase Imports and Script -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, onSnapshot, collection, query, addDoc, updateDoc, setDoc, deleteDoc, getDoc, runTransaction, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Firestore Debug Logging (for easy development/debugging)
+        setLogLevel('Debug');
+
+        // --- Global Firebase & App Variables ---
+        let app, db, auth;
+        let userId = null;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        const GOAL_DOC_ID = 'config'; 
+
+        // Global state object to hold the latest data for combined updates
+        let appState = {
+            currentBalance: 0,
+            goalAmount: 0,
+            monthlyAllowance: 0, 
+            transactions: []
+        };
+        
+        // --- UI Utility Functions ---
+
+        /**
+         * Switches the view between 'home' and 'analysis'.
+         */
+        window.switchTab = function(viewId) {
+            const views = ['home', 'analysis'];
+            
+            views.forEach(id => {
+                const viewElement = document.getElementById(`${id}-view`);
+                const tabElement = document.getElementById(`tab-${id}`);
+                
+                if (id === viewId) {
+                    viewElement.classList.remove('hidden');
+                    tabElement.classList.add('border-indigo-500', 'text-indigo-600');
+                    tabElement.classList.remove('border-transparent', 'text-gray-500', 'hover:text-indigo-600', 'hover:border-indigo-300');
+
+                    if (id === 'analysis') {
+                        // Render chart only when switching to the analysis tab
+                        renderAnalysisChart(appState.transactions);
+                    }
+                } else {
+                    viewElement.classList.add('hidden');
+                    tabElement.classList.remove('border-indigo-500', 'text-indigo-600');
+                    tabElement.classList.add('border-transparent', 'text-gray-500', 'hover:text-indigo-600', 'hover:border-indigo-300');
+                }
+            });
+        }
+
+        /**
+         * Toggles the visibility of the category field based on transaction type.
+         */
+        function toggleCategoryField() {
+            const type = document.querySelector('input[name="type"]:checked').value;
+            const categoryField = document.getElementById('category-field');
+            const categorySelect = document.getElementById('category');
+
+            if (type === 'expense') {
+                categoryField.classList.remove('hidden');
+                categorySelect.required = true;
+            } else {
+                categoryField.classList.add('hidden');
+                categorySelect.required = false;
+                categorySelect.value = 'none'; // Reset value for income
+            }
+        }
+        
+        // Listen for radio button changes to toggle category field
+        document.querySelectorAll('input[name="type"]').forEach(radio => {
+            radio.addEventListener('change', toggleCategoryField);
+        });
+        
+        // Initial call to set up the field state
+        window.onload = function() {
+            initFirebase();
+            toggleCategoryField(); // Ensure it's correct on load
+        };
+        
+        /**
+         * Custom message box implementation (replaces alert/confirm)
+         */
+        function showMessageBox(title, message, isConfirm = false) {
+            return new Promise(resolve => {
+                const messageBox = document.getElementById('message-box');
+                document.getElementById('message-title').textContent = title;
+                document.getElementById('message-text').textContent = message;
+                
+                const confirmButton = document.getElementById('message-confirm');
+                const cancelButton = document.getElementById('message-cancel');
+                
+                // Reset handlers
+                confirmButton.onclick = null;
+                cancelButton.onclick = null;
+
+                if (isConfirm) {
+                    cancelButton.classList.remove('hidden');
+                    confirmButton.textContent = '확인';
+                    confirmButton.onclick = () => {
+                        messageBox.classList.add('hidden');
+                        resolve(true);
+                    };
+                    cancelButton.onclick = () => {
+                        messageBox.classList.add('hidden');
+                        resolve(false);
+                    };
+                } else {
+                    cancelButton.classList.add('hidden');
+                    confirmButton.textContent = '닫기';
+                    confirmButton.onclick = () => {
+                        messageBox.classList.add('hidden');
+                        resolve(true);
+                    };
+                }
+
+                messageBox.classList.remove('hidden');
+                messageBox.classList.add('flex'); 
+            });
+        }
+
+        /**
+         * Formats a number as a currency string (Korean Won).
+         */
+        const formatCurrency = (number) => {
+            return new Intl.NumberFormat('ko-KR', { style: 'currency', currency: 'KRW' }).format(number);
+        };
+
+        // --- UI Modal Functions ---
+
+        window.showGoalModal = function() {
+            document.getElementById('goal-modal').classList.remove('hidden');
+            document.getElementById('goal-modal').classList.add('flex');
+            const currentGoalText = document.getElementById('goal-display').textContent.replace(/[^0-9]/g, '');
+            document.getElementById('new-goal').value = currentGoalText ? parseInt(currentGoalText) : 0;
+        }
+
+        window.hideGoalModal = function() {
+            document.getElementById('goal-modal').classList.add('hidden');
+            document.getElementById('goal-modal').classList.remove('flex');
+        }
+
+        window.showAllowanceModal = function() {
+            document.getElementById('allowance-modal').classList.remove('hidden');
+            document.getElementById('allowance-modal').classList.add('flex');
+            const currentAllowanceText = document.getElementById('monthly-allowance-display').textContent.replace(/[^0-9]/g, '');
+            document.getElementById('new-allowance').value = currentAllowanceText ? parseInt(currentAllowanceText) : 0;
+        }
+
+        window.hideAllowanceModal = function() {
+            document.getElementById('allowance-modal').classList.add('hidden');
+            document.getElementById('allowance-modal').classList.remove('flex');
+        }
+
+        // --- Firebase Initialization and Authentication ---
+
+        async function initFirebase() {
+            try {
+                if (Object.keys(firebaseConfig).length === 0) {
+                    throw new Error("Firebase configuration is missing.");
+                }
+
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                document.getElementById('auth-status').textContent = '사용자 인증 대기 중...';
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        document.getElementById('auth-status').textContent = `사용자 ID: ${userId.substring(0, 8)}... (로그인됨)`;
+                        setupFirestoreListeners();
+                    } else {
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error("Firebase initialization or authentication failed:", error);
+                document.getElementById('auth-status').textContent = `오류 발생: ${error.message}`;
+                showMessageBox("오류", "데이터베이스 연결에 실패했습니다. 콘솔을 확인하세요.");
+            }
+        }
+
+        // --- Firestore References ---
+        
+        const getUserDataCollectionRef = () => {
+            if (!userId) throw new Error("User ID is not set.");
+            // Collection path: /artifacts/{appId}/users/{userId}/allowance_tracker_data (5 segments)
+            return collection(db, 'artifacts', appId, 'users', userId, 'allowance_tracker_data');
+        };
+
+        const getGoalDocRef = () => {
+            if (!userId) throw new Error("User ID is not set.");
+            // Document path: /artifacts/{appId}/users/{userId}/allowance_tracker_data/config (6 segments)
+            return doc(getUserDataCollectionRef(), GOAL_DOC_ID);
+        };
+
+        const getTransactionsCollectionRef = () => {
+            if (!userId) throw new Error("User ID is not set.");
+            // Collection path: /artifacts/{appId}/users/{userId}/allowance_tracker_data/config/transactions (7 segments)
+            return collection(getGoalDocRef(), 'transactions');
+        };
+
+        // --- Data Listeners (Real-time Updates) ---
+
+        function setupFirestoreListeners() {
+            if (!db || !userId) return;
+
+            // 1. Listen to Config Document (Balance, Goal, Allowance)
+            // This listener automatically ensures the UI updates whenever the currentBalance or monthlyAllowance changes.
+            onSnapshot(getGoalDocRef(), (docSnapshot) => {
+                const data = docSnapshot.exists() ? docSnapshot.data() : { currentBalance: 0, goalAmount: 0, monthlyAllowance: 0 }; 
+                appState.currentBalance = data.currentBalance || 0;
+                appState.goalAmount = data.goalAmount || 0;
+                appState.monthlyAllowance = data.monthlyAllowance || 0; 
+                updateAppUI(); 
+            }, (error) => {
+                console.error("Error fetching config data:", error);
+                showMessageBox("데이터 오류", "잔액/목표/용돈 정보를 불러오는 데 실패했습니다.");
+            });
+
+            // 2. Listen to Transactions Collection
+            onSnapshot(getTransactionsCollectionRef(), (snapshot) => {
+                const transactions = [];
+                snapshot.forEach(doc => {
+                    transactions.push({ id: doc.id, ...doc.data() });
+                });
+                
+                // Sort transactions in memory by timestamp descending (newest first)
+                transactions.sort((a, b) => {
+                    const timeA = a.timestamp?.toDate ? a.timestamp.toDate().getTime() : new Date(0).getTime();
+                    const timeB = b.timestamp?.toDate ? b.timestamp.toDate().getTime() : new Date(0).getTime();
+                    return timeB - timeA; 
+                });
+                
+                appState.transactions = transactions;
+                updateAppUI(); 
+            }, (error) => {
+                console.error("Error fetching transactions:", error);
+                showMessageBox("데이터 오류", "거래 기록을 불러오는 데 실패했습니다.");
+            });
+        }
+        
+        // --- Combined UI and Advice Update ---
+        
+        /** Combines all UI updates and calls advice generator */
+        function updateAppUI() {
+            updateBalanceUI(appState.currentBalance, appState.goalAmount, appState.monthlyAllowance); 
+            updateHistoryUI(appState.transactions);
+            generateSpendingAdvice(appState.transactions, appState.currentBalance, appState.goalAmount, appState.monthlyAllowance); 
+            
+            // Re-render chart if analysis tab is active (Ensures data is fresh when returning to tab)
+            if (!document.getElementById('analysis-view').classList.contains('hidden')) {
+                renderAnalysisChart(appState.transactions);
+            }
+        }
+
+        /**
+         * Generates and displays spending advice based on current state.
+         */
+        function generateSpendingAdvice(transactions, balance, goal, allowance) {
+            const adviceSection = document.getElementById('advice-section');
+            const adviceText = document.getElementById('advice-text');
+            let advice = "";
+            let colorClass = 'bg-gray-100 border-gray-300 text-gray-700'; 
+
+            const now = new Date();
+            // Start of current day's month for filtering recent expenses
+            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), now.getDate() < 1 ? now.getMonth() - 1 : now.getMonth(), 1); 
+
+            const totalExpenseThisMonth = transactions
+                .filter(tx => {
+                    const txDate = tx.timestamp?.toDate ? tx.timestamp.toDate() : new Date(tx.timestamp);
+                    return tx.type === 'expense' && txDate >= startOfMonth;
+                })
+                .reduce((sum, tx) => sum + tx.amount, 0);
+
+            let useRate = 0;
+            if (allowance > 0) {
+                useRate = (totalExpenseThisMonth / allowance) * 100;
+            }
+            
+            if (allowance === 0) {
+                 advice = "📅 **월 용돈 금액을 설정**하면 이달의 예산 사용률과 맞춤형 지출 조언을 받을 수 있어요!";
+                 colorClass = 'bg-gray-100 border-gray-300 text-gray-700';
+            } 
+            else if (goal > 0 && balance >= goal) {
+                advice = `🎉 **목표 달성 축하합니다!** 용돈 ${formatCurrency(allowance)} 중 ${formatCurrency(totalExpenseThisMonth)} 사용.`;
+                colorClass = 'bg-green-100 border-green-300 text-green-800';
+            }
+            else if (balance <= 0) {
+                advice = `🔴 **위험! 잔액이 0원 이하입니다.** 이달 지출액: ${formatCurrency(totalExpenseThisMonth)}. 다음 수입까지 지출을 멈춰야 합니다.`;
+                colorClass = 'bg-red-100 border-red-300 text-red-800';
+            }
+            else if (useRate >= 100) {
+                advice = `🚨 **예산 초과!** 월 용돈 **${formatCurrency(allowance)}** 중 **${formatCurrency(totalExpenseThisMonth)}** 사용 (${Math.round(useRate)}%). 남은 기간 동안 절약이 절실합니다.`;
+                colorClass = 'bg-red-100 border-red-300 text-red-800';
+            } else if (useRate >= 80) {
+                advice = `⚠️ **예산 주의!** 월 용돈 **${formatCurrency(allowance)}** 중 **${formatCurrency(totalExpenseThisMonth)}** 사용 (${Math.round(useRate)}%). 남은 용돈을 신중하게 사용하세요.`;
+                colorClass = 'bg-yellow-100 border-yellow-300 text-yellow-800';
+            } else {
+                advice = `✨ **아주 잘 관리하고 있어요!** 월 용돈 **${formatCurrency(allowance)}** 중 **${formatCurrency(totalExpenseThisMonth)}** 사용 (${Math.round(useRate)}%). 이대로 꾸준히 저금하세요!`;
+                colorClass = 'bg-blue-100 border-blue-300 text-blue-800';
+            }
+
+
+            adviceSection.className = `mb-6 p-4 rounded-lg border ${colorClass}`;
+            adviceText.innerHTML = advice.replace(/\n/g, '<br>'); 
+            adviceSection.classList.remove('hidden');
+        }
+
+        // --- UI Update Functions ---
+
+        /**
+         * Updates the UI elements for balance, goal, progress bar, and monthly allowance.
+         */
+        function updateBalanceUI(balance, goal, allowance) {
+            document.getElementById('current-balance').textContent = formatCurrency(balance);
+            document.getElementById('goal-display').textContent = formatCurrency(goal);
+            document.getElementById('monthly-allowance-display').textContent = formatCurrency(allowance); 
+
+            let progress = 0;
+            if (goal > 0) {
+                progress = Math.min(100, Math.round((balance / goal) * 100));
+            } else if (balance > 0) {
+                progress = 100;
+            }
+
+            const progressBar = document.getElementById('progress-bar');
+            progressBar.style.width = `${progress}%`;
+            document.getElementById('progress-percentage').textContent = `${progress}% 달성`;
+        }
+
+        /**
+         * Updates the UI for the transaction history list.
+         */
+        function updateHistoryUI(transactions) {
+            const list = document.getElementById('history-list');
+            list.innerHTML = ''; 
+
+            if (transactions.length === 0) {
+                list.innerHTML = '<li class="text-center text-gray-500 py-2">기록된 거래가 없습니다.</li>';
+                return;
+            }
+
+            transactions.slice(0, 10).forEach(tx => { 
+                const isIncome = tx.type === 'income';
+                const sign = isIncome ? '+' : '-';
+                const color = isIncome ? 'text-green-600' : 'text-red-600';
+                const categoryText = tx.category && tx.type === 'expense' ? ` (${tx.category})` : '';
+                
+                const date = tx.timestamp?.toDate ? tx.timestamp.toDate() : new Date(tx.timestamp);
+                const dateStr = date.toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' });
+
+                const listItem = document.createElement('li');
+                listItem.className = 'flex justify-between items-center p-3 rounded-lg bg-white border border-gray-100 shadow-sm transition hover:shadow-md';
+                listItem.innerHTML = `
+                    <div class="flex-1">
+                        <p class="font-medium text-gray-800 truncate">${tx.description} <span class="text-xs text-indigo-500 font-semibold">${categoryText}</span></p>
+                        <p class="text-xs text-gray-500">${dateStr}</p>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <span class="font-bold text-lg ${color}">${sign}${formatCurrency(tx.amount)}</span>
+                        <button class="text-gray-400 hover:text-red-500 transition duration-150" onclick="deleteTransaction('${tx.id}', ${tx.amount}, '${tx.type}')">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 10-2 0v6a1 1 0 102 0V8z" clip-rule="evenodd" />
+                            </svg>
+                        </button>
+                    </div>
+                `;
+                list.appendChild(listItem);
+            });
+        }
+        
+        /**
+         * Renders a D3 bar chart showing expense distribution by category.
+         */
+        function renderAnalysisChart(transactions) {
+            const chartSvg = d3.select("#spending-chart");
+            chartSvg.selectAll("*").remove(); // Clear previous chart
+            
+            const chartMessage = document.getElementById('chart-message');
+            
+            // Filter expenses from the last 30 days
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+            const recentExpenses = transactions
+                .filter(tx => {
+                    const txDate = tx.timestamp?.toDate ? tx.timestamp.toDate() : new Date(tx.timestamp);
+                    return tx.type === 'expense' && txDate >= thirtyDaysAgo && tx.category && tx.category !== 'none';
+                });
+
+            // Aggregate expenses by category
+            const categoryDataMap = d3.group(recentExpenses, d => d.category);
+            const aggregatedData = Array.from(categoryDataMap, ([category, transactions]) => ({
+                category,
+                amount: d3.sum(transactions, d => d.amount)
+            }));
+            
+            if (aggregatedData.length === 0) {
+                chartMessage.textContent = "최근 30일간 지출 기록이 부족하여 차트를 표시할 수 없습니다.";
+                chartSvg.attr("height", 0); 
+                chartMessage.classList.remove('hidden');
+                return;
+            }
+
+            chartMessage.classList.add('hidden');
+            
+            const margin = {top: 20, right: 20, bottom: 60, left: 60};
+            const width = 400 - margin.left - margin.right;
+            const height = 300 - margin.top - margin.bottom;
+            
+            chartSvg.attr("width", width + margin.left + margin.right)
+                    .attr("height", height + margin.top + margin.bottom);
+
+            const totalExpense = d3.sum(aggregatedData, d => d.amount);
+            
+            // D3 Scales
+            const x = d3.scaleBand()
+                .range([0, width])
+                .domain(aggregatedData.map(d => d.category))
+                .padding(0.2);
+
+            const y = d3.scaleLinear()
+                .range([height, 0])
+                .domain([0, d3.max(aggregatedData, d => d.amount)]).nice();
+
+            // Append group element
+            const g = chartSvg.append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
+
+            // X-Axis
+            g.append("g")
+                .attr("transform", `translate(0,${height})`)
+                .call(d3.axisBottom(x))
+                .selectAll("text")
+                .attr("transform", "translate(-10,0)rotate(-45)")
+                .style("text-anchor", "end")
+                .style("font-size", "10px");
+
+            // Y-Axis
+            g.append("g")
+                .call(d3.axisLeft(y).ticks(5).tickFormat(d => `${d3.format(".2s")(d)}`)) // Format as short currency
+                .style("font-size", "10px")
+                .append("text")
+                .attr("fill", "#000")
+                .attr("transform", "rotate(-90)")
+                .attr("y", 6)
+                .attr("dy", "0.71em")
+                .attr("text-anchor", "end")
+                .text("지출액 (원)");
+
+            // Bars and Labels
+            g.selectAll(".bar")
+                .data(aggregatedData)
+                .enter().append("rect")
+                .attr("class", "bar")
+                .attr("x", d => x(d.category))
+                .attr("y", d => y(d.amount))
+                .attr("width", x.bandwidth())
+                .attr("height", d => height - y(d.amount));
+                
+            // Text labels for percentage
+            g.selectAll(".bar-label")
+                .data(aggregatedData)
+                .enter().append("text")
+                .attr("class", "bar-label")
+                .attr("x", d => x(d.category) + x.bandwidth() / 2)
+                .attr("y", d => y(d.amount) - 5)
+                .attr("text-anchor", "middle")
+                .style("font-size", "10px")
+                .style("fill", "#333")
+                .text(d => `${((d.amount / totalExpense) * 100).toFixed(1)}%`);
+        }
+
+        // --- Firestore Data Operations ---
+
+        /**
+         * Sets or updates the savings goal amount.
+         */
+        async function setSavingsGoal(goalAmount) {
+            try {
+                if (!db || !userId) throw new Error("Database not ready.");
+                const goalRef = getGoalDocRef();
+                
+                // Updates config document -> triggers onSnapshot -> updates UI
+                await setDoc(goalRef, { goalAmount: goalAmount }, { merge: true });
+                showMessageBox("목표 설정 완료", `새로운 저금 목표가 ${formatCurrency(goalAmount)}으로 설정되었습니다.`);
+                hideGoalModal();
+
+            } catch (error) {
+                console.error("Error setting goal:", error);
+                showMessageBox("저장 오류", "목표를 저장하는 데 실패했습니다.");
+            }
+        }
+        
+        /**
+         * Sets or updates the monthly allowance amount AND records it as income.
+         */
+        async function setMonthlyAllowance(allowanceAmount) {
+            try {
+                if (!db || !userId) throw new Error("Database not ready.");
+                const goalRef = getGoalDocRef();
+                const transactionsRef = getTransactionsCollectionRef();
+                
+                if (allowanceAmount <= 0) {
+                    await setDoc(goalRef, { monthlyAllowance: allowanceAmount }, { merge: true });
+                    showMessageBox("용돈 설정 완료", `월별 용돈이 ${formatCurrency(allowanceAmount)}으로 설정되었습니다.`);
+                    hideAllowanceModal();
+                    return;
+                }
+                
+                // Execute a transaction to update both the budget setting and the balance
+                await runTransaction(db, async (transaction) => {
+                    // 1. Get current config
+                    const goalDoc = await transaction.get(goalRef);
+                    const data = goalDoc.exists() ? goalDoc.data() : { currentBalance: 0, goalAmount: 0, monthlyAllowance: 0 };
+                    const currentBalance = data.currentBalance || 0;
+                    
+                    // 2. Calculate new balance for the deposit
+                    let newBalance = currentBalance + allowanceAmount;
+
+                    // 3. Update the config document (budget, goal, balance)
+                    transaction.set(goalRef, { 
+                        currentBalance: newBalance, 
+                        goalAmount: data.goalAmount || 0,
+                        monthlyAllowance: allowanceAmount // Update the budget limit
+                    }, { merge: true });
+
+                    // 4. Add the transaction record
+                    transaction.set(doc(transactionsRef), {
+                        type: 'income',
+                        amount: allowanceAmount,
+                        description: '월 용돈 (예산 및 잔액 반영)', 
+                        timestamp: serverTimestamp(), 
+                        category: '수입' // Set category for allowance income
+                    });
+                });
+
+                showMessageBox("용돈 및 잔액 반영 완료", `월 용돈 **${formatCurrency(allowanceAmount)}**이(가) 예산으로 설정되고 현재 잔액에 **수입으로 반영**되었습니다.`);
+                hideAllowanceModal();
+
+            } catch (error) {
+                console.error("Error setting monthly allowance and updating balance:", error);
+                showMessageBox("저장 오류", "월별 용돈을 저장하고 잔액에 반영하는 데 실패했습니다.");
+            }
+        }
+
+        /**
+         * Adds a new transaction and updates the balance using a transaction for safety.
+         */
+        async function addTransaction(amount, type, description, category) {
+            if (!db || !userId) return showMessageBox("오류", "데이터베이스 연결이 완료되지 않았습니다.");
+
+            const goalRef = getGoalDocRef();
+            const transactionsRef = getTransactionsCollectionRef();
+
+            if (type === 'expense' && category === 'none') {
+                return showMessageBox("입력 오류", "지출 기록 시 카테고리를 반드시 선택해주세요.");
+            }
+
+            try {
+                await runTransaction(db, async (transaction) => {
+                    // 1. Get the current config 
+                    const goalDoc = await transaction.get(goalRef);
+                    const data = goalDoc.exists() ? goalDoc.data() : { currentBalance: 0, goalAmount: 0, monthlyAllowance: 0 };
+                    const currentBalance = data.currentBalance || 0;
+                    
+                    // 2. Calculate new balance
+                    let newBalance = currentBalance;
+                    if (type === 'income') {
+                        newBalance += amount;
+                    } else if (type === 'expense') {
+                        newBalance -= amount;
+                    }
+
+                    // 3. Update the balance document (Triggers UI update via onSnapshot)
+                    transaction.set(goalRef, { 
+                        currentBalance: newBalance, 
+                        goalAmount: data.goalAmount || 0,
+                        monthlyAllowance: data.monthlyAllowance || 0 
+                    }, { merge: true });
+
+                    // 4. Add the transaction record
+                    transaction.set(doc(transactionsRef), {
+                        type,
+                        amount,
+                        description,
+                        category: type === 'income' ? '수입' : category, // Assign '수입' for income
+                        timestamp: serverTimestamp(), 
+                    });
+                });
+                
+                showMessageBox("기록 완료", `${description} ${type === 'income' ? '수입' : '지출'} 기록이 성공적으로 반영되었습니다.`);
+
+            } catch (error) {
+                console.error("Transaction failed:", error);
+                showMessageBox("거래 오류", "잔액 업데이트 중 오류가 발생했습니다. (잔액 부족 등)");
+            }
+        }
+
+        /**
+         * Deletes a transaction and reverses its effect on the balance.
+         */
+        window.deleteTransaction = async function(txId, amount, type) {
+            if (!db || !userId) return showMessageBox("오류", "데이터베이스 연결이 완료되지 않았습니다.");
+
+            const confirmed = await showMessageBox("기록 삭제", "정말로 이 거래 기록을 삭제하시겠습니까? 잔액이 되돌려집니다.", true);
+            if (!confirmed) return;
+
+            const goalRef = getGoalDocRef();
+            const transactionRef = doc(getTransactionsCollectionRef(), txId);
+
+            try {
+                await runTransaction(db, async (transaction) => {
+                    const goalDoc = await transaction.get(goalRef);
+                    const data = goalDoc.exists() ? goalDoc.data() : { currentBalance: 0, goalAmount: 0, monthlyAllowance: 0 };
+                    const currentBalance = data.currentBalance || 0;
+                    
+                    let newBalance = currentBalance;
+                    // Reverse the operation:
+                    if (type === 'income') {
+                        newBalance -= amount;
+                    } else if (type === 'expense') {
+                        newBalance += amount;
+                    }
+
+                    // Update balance (Triggers UI update via onSnapshot)
+                    transaction.set(goalRef, { currentBalance: newBalance }, { merge: true });
+                    
+                    // Delete transaction record
+                    transaction.delete(transactionRef);
+                });
+                
+                showMessageBox("삭제 완료", "거래 기록이 삭제되고 잔액이 조정되었습니다.");
+
+            } catch (error) {
+                console.error("Deletion transaction failed:", error);
+                showMessageBox("삭제 오류", "기록을 삭제하는 데 실패했습니다.");
+            }
+        }
+
+        // --- Form Submission Handlers ---
+
+        document.getElementById('transaction-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const type = document.querySelector('input[name="type"]:checked').value;
+            const category = document.getElementById('category').value;
+            const amount = parseInt(document.getElementById('amount').value);
+            const description = document.getElementById('description').value.trim();
+
+            if (isNaN(amount) || amount <= 0) {
+                return showMessageBox("입력 오류", "금액을 올바르게 입력해주세요 (1원 이상).");
+            }
+            if (description === "") {
+                return showMessageBox("입력 오류", "내용을 입력해주세요.");
+            }
+            if (type === 'expense' && category === 'none') {
+                 return showMessageBox("입력 오류", "지출 기록 시 카테고리를 반드시 선택해주세요.");
+            }
+
+            document.getElementById('amount').value = '';
+            document.getElementById('description').value = '';
+            document.getElementById('category').value = 'none'; // Reset category
+
+            addTransaction(amount, type, description, category);
+        });
+
+        document.getElementById('goal-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const newGoal = parseInt(document.getElementById('new-goal').value);
+
+            if (isNaN(newGoal) || newGoal < 0) {
+                return showMessageBox("입력 오류", "목표 금액을 올바르게 입력해주세요 (0원 이상).");
+            }
+
+            setSavingsGoal(newGoal);
+        });
+        
+        document.getElementById('allowance-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const newAllowance = parseInt(document.getElementById('new-allowance').value);
+
+            if (isNaN(newAllowance) || newAllowance < 0) {
+                return showMessageBox("입력 오류", "월별 용돈 금액을 올바르게 입력해주세요 (0원 이상).");
+            }
+
+            setMonthlyAllowance(newAllowance);
+        });
+
+    </script>
+</body>
+</html>
